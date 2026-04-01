@@ -20,6 +20,23 @@ struct AudioModeInfo: Identifiable {
     var id: UInt8 { modeIndex }
 }
 
+/// Spatial audio mode: 0=off, 1=still (fixed to room), 2=motion (fixed to head).
+enum SpatialAudioMode: UInt8, CaseIterable, Identifiable {
+    case off = 0
+    case still = 1
+    case motion = 2
+
+    var id: UInt8 { rawValue }
+
+    var label: String {
+        switch self {
+        case .off: "Off"
+        case .still: "Still"
+        case .motion: "Motion"
+        }
+    }
+}
+
 struct HeadphoneState {
     var connected: Bool = false
     var productName: String? = nil
@@ -28,4 +45,5 @@ struct HeadphoneState {
     var audioModeIndex: UInt8? = nil
     var audioModes: [AudioModeInfo] = []
     var standbyTimerMinutes: UInt8? = nil
+    var spatialAudio: SpatialAudioMode? = nil
 }

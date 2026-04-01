@@ -61,6 +61,9 @@ enum FnId {
     enum Control {
         static let power: UInt8 = 0x04
     }
+    enum AudioManagement {
+        static let spatialAudioMode: UInt8 = 0x0F
+    }
     enum AudioModes {
         static let getAll: UInt8 = 0x01
         static let currentMode: UInt8 = 0x03

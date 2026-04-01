@@ -35,6 +35,7 @@ final class HeadphoneViewModel: ObservableObject {
 
     func setAudioMode(_ index: UInt8) { ble.setAudioMode(index) }
     func setStandbyTimer(_ minutes: UInt8) { ble.setStandbyTimer(minutes) }
+    func setSpatialAudio(_ mode: SpatialAudioMode) { ble.setSpatialAudio(mode) }
     func powerOff() { ble.powerOff() }
     func reconnect() { ble.reconnect() }
 }

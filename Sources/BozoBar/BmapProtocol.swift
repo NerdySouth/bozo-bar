@@ -158,6 +158,23 @@ enum BmapProtocol {
         33: "Yoga", 34: "Immersion", 35: "Stereo", 36: "Cinema",
     ]
 
+    // MARK: - Spatial Audio (AudioManagement function block 0x05)
+
+    static func querySpatialAudio() -> BmapPacket {
+        BmapPacket(.audioManagement, FnId.AudioManagement.spatialAudioMode, .get)
+    }
+
+    /// Set spatial audio mode: 0=off, 1=still (fixed to room), 2=motion (fixed to head).
+    static func setSpatialAudio(_ mode: UInt8) -> BmapPacket {
+        BmapPacket(.audioManagement, FnId.AudioManagement.spatialAudioMode, .setGet, [mode])
+    }
+
+    static func parseSpatialAudio(_ pkt: BmapPacket) -> UInt8? {
+        guard pkt.functionBlock == .audioManagement,
+              pkt.function == FnId.AudioManagement.spatialAudioMode else { return nil }
+        return pkt.payload.first
+    }
+
     // MARK: - Power
 
     static func powerOff() -> BmapPacket {

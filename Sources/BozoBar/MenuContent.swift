@@ -36,6 +36,15 @@ struct MenuContent: View {
             }
         }
 
+        // Spatial audio
+        if vm.state.spatialAudio != nil {
+            Picker("Immersive Audio", selection: spatialAudioBinding) {
+                ForEach(SpatialAudioMode.allCases) { mode in
+                    Text(mode.label).tag(mode)
+                }
+            }
+        }
+
         // Standby timer
         Picker("Standby Timer", selection: standbyBinding) {
             ForEach(standbyOptions, id: \.self) { minutes in
@@ -69,6 +78,13 @@ struct MenuContent: View {
         Binding(
             get: { vm.state.audioModeIndex ?? 0 },
             set: { vm.setAudioMode($0) }
+        )
+    }
+
+    private var spatialAudioBinding: Binding<SpatialAudioMode> {
+        Binding(
+            get: { vm.state.spatialAudio ?? .off },
+            set: { vm.setSpatialAudio($0) }
         )
     }
 

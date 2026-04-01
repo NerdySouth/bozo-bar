@@ -30,6 +30,7 @@ final class BleManager: NSObject, ObservableObject, CBCentralManagerDelegate, CB
 
     func setAudioMode(_ index: UInt8) { send(BmapProtocol.setCurrentMode(index)) }
     func setStandbyTimer(_ minutes: UInt8) { send(BmapProtocol.setStandbyTimer(minutes)) }
+    func setSpatialAudio(_ mode: SpatialAudioMode) { send(BmapProtocol.setSpatialAudio(mode.rawValue)) }
     func powerOff() { send(BmapProtocol.powerOff()) }
 
     func reconnect() {
@@ -191,6 +192,7 @@ final class BleManager: NSObject, ObservableObject, CBCentralManagerDelegate, CB
             BmapProtocol.queryCnc(),
             BmapProtocol.queryCurrentMode(),
             BmapProtocol.queryStandbyTimer(),
+            BmapProtocol.querySpatialAudio(),
             BmapProtocol.queryAllModes(),
         ]
         for (i, query) in queries.enumerated() {
@@ -252,6 +254,13 @@ final class BleManager: NSObject, ObservableObject, CBCentralManagerDelegate, CB
                     state.audioModes.sort { $0.modeIndex < $1.modeIndex }
                 }
             }
+        case (.audioManagement, FnId.AudioManagement.spatialAudioMode):
+            if let raw = BmapProtocol.parseSpatialAudio(packet),
+               let mode = SpatialAudioMode(rawValue: raw) {
+                log.info("spatial audio: \(mode.label)")
+                state.spatialAudio = mode
+            }
+
         default:
             if packet.functionBlock == .audioModes {
                 log.info("unhandled audioModes func=0x\(String(format: "%02x", packet.function)) op=\(packet.op.rawValue) payload(\(packet.payload.count))=\(packet.payload.prefix(16).map { String(format: "%02x", $0) }.joined(separator: " "))")
