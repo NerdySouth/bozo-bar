@@ -62,6 +62,7 @@ enum FnId {
         static let power: UInt8 = 0x04
     }
     enum AudioModes {
+        static let getAll: UInt8 = 0x01
         static let currentMode: UInt8 = 0x03
         static let modeConfig: UInt8 = 0x06
     }

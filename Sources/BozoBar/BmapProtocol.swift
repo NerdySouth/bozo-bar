@@ -82,6 +82,17 @@ enum BmapProtocol {
 
     // MARK: - Audio Modes
 
+    /// Query the list of all available mode indices.
+    static func queryAllModes() -> BmapPacket {
+        BmapPacket(.audioModes, FnId.AudioModes.getAll, .get)
+    }
+
+    /// Parse a GetAll response — payload is a list of mode index bytes.
+    static func parseAllModes(_ pkt: BmapPacket) -> [UInt8]? {
+        guard pkt.functionBlock == .audioModes, pkt.function == FnId.AudioModes.getAll else { return nil }
+        return pkt.payload.isEmpty ? nil : Array(pkt.payload)
+    }
+
     static func queryCurrentMode() -> BmapPacket {
         BmapPacket(.audioModes, FnId.AudioModes.currentMode, .get)
     }
@@ -99,18 +110,53 @@ enum BmapProtocol {
         return pkt.payload.first
     }
 
-    /// ModeConfig payload (48 bytes): byte 0 = index, bytes 6..38 = null-terminated name.
+    /// ModeConfig payload (47-48 bytes):
+    ///   byte 0:     mode index
+    ///   bytes 1-2:  prompt (byte1, byte2) — predefined mode category
+    ///   byte 3:     userConfigurable
+    ///   byte 4:     userConfigured
+    ///   byte 5:     favorite
+    ///   bytes 6-37: mode name (null-terminated UTF-8, 32 bytes)
     static func parseModeConfig(_ pkt: BmapPacket) -> AudioModeInfo? {
         guard pkt.functionBlock == .audioModes, pkt.function == FnId.AudioModes.modeConfig,
               pkt.payload.count >= 7 else { return nil }
         let p = pkt.payload
         let index = p[0]
+        let promptId = p.count >= 3 ? p[2] : 0
+
+        // Parse text name from bytes 6..37
         let nameEnd = min(p.count, 38)
         let nameBytes = Array(p[6..<nameEnd])
         let nullPos = nameBytes.firstIndex(of: 0) ?? nameBytes.count
-        let name = String(bytes: nameBytes[..<nullPos], encoding: .utf8) ?? ""
+        let textName = String(bytes: nameBytes[..<nullPos], encoding: .utf8) ?? ""
+
+        // Use prompt name when text name is empty or "None"
+        let promptName = promptNames[promptId]
+        let name: String
+        if !textName.isEmpty && textName != "None" {
+            name = textName
+        } else if let promptName {
+            name = promptName
+        } else {
+            // No prompt name and no real text name — skip empty slot
+            return nil
+        }
+
         return AudioModeInfo(modeIndex: index, name: name)
     }
+
+    /// Prompt byte2 → display name, from the Bose Music APK AudioModesPrompt enum.
+    private static let promptNames: [UInt8: String] = [
+        1: "Quiet", 2: "Aware", 3: "Transparent", 4: "Transparency",
+        5: "Masking", 6: "Comfort", 7: "Commute", 8: "Outdoor",
+        9: "Workout", 10: "Home", 11: "Work", 12: "Music",
+        13: "Focus", 14: "Relax", 15: "Flight", 16: "Airport",
+        17: "Driving", 18: "Training", 19: "Gym", 20: "Run",
+        21: "Walk", 22: "Hike", 23: "Talk", 24: "Call",
+        25: "Whisper", 26: "Hearing", 27: "Learn", 28: "Podcast",
+        29: "Audiobook", 30: "Calm", 31: "Sleep", 32: "Meditate",
+        33: "Yoga", 34: "Immersion", 35: "Stereo", 36: "Cinema",
+    ]
 
     // MARK: - Power
 
