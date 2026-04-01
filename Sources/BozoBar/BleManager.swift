@@ -4,22 +4,33 @@ import os
 
 private let log = Logger(subsystem: "dev.bozo.bar", category: "BLE")
 
+/// A BMAP device discovered during scanning.
+struct DiscoveredDevice: Identifiable, Hashable {
+    let id: UUID // CBPeripheral identifier
+    let name: String
+    let rssi: Int
+}
+
 /// Manages the BLE connection to Bose headphones using CoreBluetooth directly.
 final class BleManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     @Published var state = HeadphoneState()
     @Published var statusMessage: String? = "Initializing Bluetooth..."
+    /// Devices found during scanning — shown to user for selection.
+    @Published var discoveredDevices: [DiscoveredDevice] = []
+    /// Whether we need the user to pick a device.
+    @Published var needsDeviceSelection = false
 
     private var central: CBCentralManager!
     private var peripheral: CBPeripheral?
     private var bmapChar: CBCharacteristic?
     private var reassembler = BmapReassembler()
+    private var isScanning = false
 
-    // UUIDs matching the Rust daemon
-    private static let bmapServiceUUID = CBUUID(string: "FEBE")
+    static let bmapServiceUUID = CBUUID(string: "FEBE")
     private static let secureCharUUID = CBUUID(string: "C65B8F2F-AEE2-4C89-B758-BC4892D6F2D8")
     private static let unsecureCharUUID = CBUUID(string: "D417C028-9818-4354-99D1-2AC09D074591")
 
-    private static let boseNamePatterns = ["bose", "adjuster"]
+    private static let savedDeviceKey = "selectedDeviceUUID"
 
     override init() {
         super.init()
@@ -40,7 +51,37 @@ final class BleManager: NSObject, ObservableObject, CBCentralManagerDelegate, CB
         peripheral = nil
         bmapChar = nil
         state = HeadphoneState()
-        startScanning()
+        startConnection()
+    }
+
+    /// User selected a device from the picker.
+    func selectDevice(_ device: DiscoveredDevice) {
+        UserDefaults.standard.set(device.id.uuidString, forKey: Self.savedDeviceKey)
+        log.info("user selected device: \"\(device.name)\" (\(device.id))")
+        needsDeviceSelection = false
+        central.stopScan()
+        isScanning = false
+        connectToSavedDevice()
+    }
+
+    /// Forget saved device and show picker again.
+    func forgetDevice() {
+        UserDefaults.standard.removeObject(forKey: Self.savedDeviceKey)
+        if let p = peripheral {
+            central.cancelPeripheralConnection(p)
+        }
+        peripheral = nil
+        bmapChar = nil
+        state = HeadphoneState()
+        discoveredDevices = []
+        needsDeviceSelection = true
+        startScan()
+    }
+
+    var savedDeviceName: String? {
+        guard let uuid = savedDeviceUUID else { return nil }
+        let peripherals = central?.retrievePeripherals(withIdentifiers: [uuid])
+        return peripherals?.first?.name
     }
 
     // MARK: - CBCentralManagerDelegate
@@ -49,8 +90,7 @@ final class BleManager: NSObject, ObservableObject, CBCentralManagerDelegate, CB
         log.info("central state: \(String(describing: central.state.rawValue))")
         switch central.state {
         case .poweredOn:
-            statusMessage = "Scanning..."
-            startScanning()
+            startConnection()
         case .poweredOff:
             statusMessage = "Bluetooth is off"
         case .unauthorized:
@@ -62,24 +102,24 @@ final class BleManager: NSObject, ObservableObject, CBCentralManagerDelegate, CB
 
     func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral,
                         advertisementData: [String: Any], rssi RSSI: NSNumber) {
-        let advName = advertisementData[CBAdvertisementDataLocalNameKey] as? String
-        let name = advName ?? peripheral.name ?? ""
+        let name = advertisementData[CBAdvertisementDataLocalNameKey] as? String
+            ?? peripheral.name ?? "Unknown Device"
 
-        guard isBoseDevice(name: name, advertisementData: advertisementData) else { return }
+        let device = DiscoveredDevice(id: peripheral.identifier, name: name, rssi: RSSI.intValue)
 
-        log.info("found Bose device: \"\(name)\" rssi=\(RSSI)")
-        central.stopScan()
-        self.peripheral = peripheral
-        peripheral.delegate = self
-        statusMessage = "Connecting to \(name)..."
-        central.connect(peripheral)
+        // Update or add to discovered list
+        if let i = discoveredDevices.firstIndex(where: { $0.id == device.id }) {
+            discoveredDevices[i] = device
+        } else {
+            log.info("discovered BMAP device: \"\(name)\" rssi=\(RSSI)")
+            discoveredDevices.append(device)
+        }
     }
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         log.info("connected to \(peripheral.name ?? "unknown")")
         statusMessage = "Discovering services..."
         state.connected = true
-        // Discover ALL services first, then look for BMAP among them
         peripheral.discoverServices(nil)
     }
 
@@ -89,40 +129,37 @@ final class BleManager: NSObject, ObservableObject, CBCentralManagerDelegate, CB
         bmapChar = nil
         statusMessage = "Disconnected"
         reassembler = BmapReassembler()
-        startScanning()
+        // Auto-reconnect if we have a saved device
+        if savedDeviceUUID != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+                self?.startConnection()
+            }
+        }
     }
 
     func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
         log.error("failed to connect: \(error?.localizedDescription ?? "unknown")")
         statusMessage = "Connection failed"
-        startScanning()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            self?.startConnection()
+        }
     }
 
     // MARK: - CBPeripheralDelegate
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
-        guard let services = peripheral.services else {
-            log.error("no services discovered: \(error?.localizedDescription ?? "nil")")
-            return
-        }
+        guard let services = peripheral.services else { return }
         log.info("discovered \(services.count) service(s): \(services.map { $0.uuid.uuidString })")
-        for service in services {
-            if service.uuid == Self.bmapServiceUUID {
-                peripheral.discoverCharacteristics([Self.secureCharUUID, Self.unsecureCharUUID], for: service)
-            }
+        for service in services where service.uuid == Self.bmapServiceUUID {
+            peripheral.discoverCharacteristics([Self.secureCharUUID, Self.unsecureCharUUID], for: service)
         }
     }
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
         guard let chars = service.characteristics else { return }
-        log.info("characteristics for \(service.uuid): \(chars.map { $0.uuid.uuidString })")
-
         let char = chars.first(where: { $0.uuid == Self.secureCharUUID })
             ?? chars.first(where: { $0.uuid == Self.unsecureCharUUID })
-        guard let char else {
-            log.warning("BMAP characteristic not found in service")
-            return
-        }
+        guard let char else { return }
 
         log.info("using characteristic: \(char.uuid)")
         bmapChar = char
@@ -133,50 +170,62 @@ final class BleManager: NSObject, ObservableObject, CBCentralManagerDelegate, CB
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
         guard characteristic === bmapChar, let data = characteristic.value else { return }
-        let bytes = [UInt8](data)
-        if let reassembled = reassembler.feed(bytes) {
+        if let reassembled = reassembler.feed([UInt8](data)) {
             for packet in BmapPacket.parseMany(reassembled) {
                 processPacket(packet)
             }
         }
     }
 
-    // MARK: - Private
+    // MARK: - Connection Logic
 
-    private func startScanning() {
+    private var savedDeviceUUID: UUID? {
+        guard let str = UserDefaults.standard.string(forKey: Self.savedDeviceKey) else { return nil }
+        return UUID(uuidString: str)
+    }
+
+    private func startConnection() {
         guard central.state == .poweredOn else { return }
-        statusMessage = "Scanning..."
 
-        // Check for Bose devices already connected via BLE
-        let connected = central.retrieveConnectedPeripherals(withServices: [Self.bmapServiceUUID])
-        log.info("retrieveConnectedPeripherals returned \(connected.count) device(s)")
-        for p in connected {
-            let name = p.name ?? ""
-            if isBoseDevice(name: name, advertisementData: [:]) {
-                log.info("found already-connected Bose device: \"\(name)\"")
-                self.peripheral = p
-                p.delegate = self
-                statusMessage = "Connecting to \(name)..."
-                central.connect(p)
-                return
-            }
+        if savedDeviceUUID != nil {
+            connectToSavedDevice()
+        } else {
+            // No saved device — need user to pick one
+            needsDeviceSelection = true
+            statusMessage = "Select your headphones"
+            startScan()
+        }
+    }
+
+    private func connectToSavedDevice() {
+        guard let uuid = savedDeviceUUID else { return }
+
+        // retrievePeripherals works even if the device isn't advertising — it uses
+        // the system's cached peripheral record from previous connections.
+        let known = central.retrievePeripherals(withIdentifiers: [uuid])
+        if let p = known.first {
+            log.info("connecting to saved device: \"\(p.name ?? "")\" (\(uuid))")
+            self.peripheral = p
+            p.delegate = self
+            statusMessage = "Connecting to \(p.name ?? "device")..."
+            central.connect(p)
+            return
         }
 
-        // Scan for advertising devices — no service filter so we catch everything
-        log.info("starting BLE scan...")
-        central.scanForPeripherals(withServices: nil, options: [
-            CBCentralManagerScanOptionAllowDuplicatesKey: false,
-        ])
+        // Device not found in cache — scan for it
+        log.info("saved device not in cache, scanning...")
+        statusMessage = "Scanning..."
+        startScan()
     }
 
-    private func isBoseDevice(name: String, advertisementData: [String: Any]) -> Bool {
-        let lower = name.lowercased()
-        let byName = !lower.isEmpty && Self.boseNamePatterns.contains { lower.contains($0) }
-        let services = advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID] ?? []
-        let overflow = advertisementData[CBAdvertisementDataOverflowServiceUUIDsKey] as? [CBUUID] ?? []
-        let byUUID = (services + overflow).contains(Self.bmapServiceUUID)
-        return byName || byUUID
+    private func startScan() {
+        guard !isScanning else { return }
+        isScanning = true
+        discoveredDevices = []
+        central.scanForPeripherals(withServices: [Self.bmapServiceUUID], options: nil)
     }
+
+    // MARK: - Packet I/O
 
     private func send(_ packet: BmapPacket) {
         guard let char = bmapChar, let peripheral else { return }
@@ -200,7 +249,6 @@ final class BleManager: NSObject, ObservableObject, CBCentralManagerDelegate, CB
                 self?.send(query)
             }
         }
-        // Fallback: brute-force probe indices 0..19 in case GET_ALL doesn't work
         let probeStart = Double(queries.count) * 0.15 + 0.5
         for i: UInt8 in 0..<20 {
             DispatchQueue.main.asyncAfter(deadline: .now() + probeStart + Double(i) * 0.15) { [weak self] in
@@ -209,9 +257,7 @@ final class BleManager: NSObject, ObservableObject, CBCentralManagerDelegate, CB
         }
     }
 
-    /// After receiving the mode index list, query each mode's config for its name.
     private func queryModeConfigs(indices: [UInt8]) {
-        log.info("querying config for \(indices.count) mode(s): \(indices)")
         for (i, idx) in indices.enumerated() {
             DispatchQueue.main.asyncAfter(deadline: .now() + Double(i) * 0.15) { [weak self] in
                 self?.send(BmapProtocol.queryModeConfig(idx))
@@ -225,27 +271,17 @@ final class BleManager: NSObject, ObservableObject, CBCentralManagerDelegate, CB
         switch (packet.functionBlock, packet.function) {
         case (.status, FnId.Status.batteryLevel):
             if let info = BmapProtocol.parseBattery(packet) { state.battery = info }
-
         case (.settings, FnId.Settings.cnc):
             if let cnc = BmapProtocol.parseCnc(packet) { state.cnc = cnc }
-
         case (.settings, FnId.Settings.productName):
             if let name = BmapProtocol.parseName(packet) { state.productName = name }
-
         case (.settings, FnId.Settings.standbyTimer):
             if let m = BmapProtocol.parseStandbyTimer(packet) { state.standbyTimerMinutes = m }
-
         case (.audioModes, FnId.AudioModes.getAll):
-            log.info("GET_ALL response op=\(packet.op.rawValue) payload(\(packet.payload.count))=\(packet.payload.map { String(format: "%02x", $0) }.joined(separator: " "))")
-            if let indices = BmapProtocol.parseAllModes(packet) {
-                queryModeConfigs(indices: indices)
-            }
-
+            if let indices = BmapProtocol.parseAllModes(packet) { queryModeConfigs(indices: indices) }
         case (.audioModes, FnId.AudioModes.currentMode):
             if let idx = BmapProtocol.parseCurrentMode(packet) { state.audioModeIndex = idx }
-
         case (.audioModes, FnId.AudioModes.modeConfig):
-            log.info("MODE_CONFIG response idx=\(packet.payload.first ?? 0) payload(\(packet.payload.count))=\(packet.payload.prefix(8).map { String(format: "%02x", $0) }.joined(separator: " "))")
             if let info = BmapProtocol.parseModeConfig(packet) {
                 if let i = state.audioModes.firstIndex(where: { $0.modeIndex == info.modeIndex }) {
                     state.audioModes[i] = info
@@ -257,14 +293,10 @@ final class BleManager: NSObject, ObservableObject, CBCentralManagerDelegate, CB
         case (.audioManagement, FnId.AudioManagement.spatialAudioMode):
             if let raw = BmapProtocol.parseSpatialAudio(packet),
                let mode = SpatialAudioMode(rawValue: raw) {
-                log.info("spatial audio: \(mode.label)")
                 state.spatialAudio = mode
             }
-
         default:
-            if packet.functionBlock == .audioModes {
-                log.info("unhandled audioModes func=0x\(String(format: "%02x", packet.function)) op=\(packet.op.rawValue) payload(\(packet.payload.count))=\(packet.payload.prefix(16).map { String(format: "%02x", $0) }.joined(separator: " "))")
-            }
+            break
         }
     }
 }
