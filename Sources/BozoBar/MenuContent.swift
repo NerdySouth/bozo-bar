@@ -1,4 +1,5 @@
 import SwiftUI
+import ServiceManagement
 
 struct MenuContent: View {
     @ObservedObject var vm: HeadphoneViewModel
@@ -91,6 +92,14 @@ struct MenuContent: View {
 
             Divider().padding(.vertical, 4)
 
+            // Launch at login
+            Toggle("Launch at Login", isOn: launchAtLoginBinding)
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .padding(.horizontal, 12)
+
+            Divider().padding(.vertical, 4)
+
             // Actions
             HStack(spacing: 8) {
                 Button("Reconnect") { vm.reconnect() }
@@ -119,6 +128,23 @@ struct MenuContent: View {
             .padding(.horizontal, 12)
             .padding(.top, 4)
             .padding(.bottom, 2)
+    }
+
+    private var launchAtLoginBinding: Binding<Bool> {
+        Binding(
+            get: { SMAppService.mainApp.status == .enabled },
+            set: { enabled in
+                do {
+                    if enabled {
+                        try SMAppService.mainApp.register()
+                    } else {
+                        try SMAppService.mainApp.unregister()
+                    }
+                } catch {
+                    // User can also manage this in System Settings > Login Items
+                }
+            }
+        )
     }
 
     private let standbyOptions: [UInt8] = [0, 5, 10, 20, 30, 60, 120]
