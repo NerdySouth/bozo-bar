@@ -7,6 +7,7 @@ struct BozoBarApp: App {
     var body: some Scene {
         MenuBarExtra {
             MenuContent(vm: vm)
+                .frame(width: 300)
         } label: {
             Label {
                 Text(vm.menuBarTitle)
@@ -14,6 +15,6 @@ struct BozoBarApp: App {
                 Image(systemName: "headphones")
             }
         }
-        .menuBarExtraStyle(.menu)
+        .menuBarExtraStyle(.window)
     }
 }
