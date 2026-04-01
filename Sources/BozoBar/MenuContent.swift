@@ -1,10 +1,86 @@
 import SwiftUI
-import ServiceManagement
 
 struct MenuContent: View {
     @ObservedObject var vm: HeadphoneViewModel
+    @State private var showSettings = false
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if showSettings {
+                settingsPage
+            } else if vm.needsDeviceSelection {
+                devicePicker
+            } else {
+                devicePanel
+            }
+        }
+    }
+
+    // MARK: - Device Picker (first launch / no saved device)
+
+    private var devicePicker: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Image(systemName: "headphones")
+                    .font(.title2)
+                Text("Select Your Headphones")
+                    .font(.headline)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+
+            Divider()
+
+            if vm.discoveredDevices.isEmpty {
+                HStack {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Scanning for BMAP devices...")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 12)
+            } else {
+                ForEach(vm.discoveredDevices) { device in
+                    Button {
+                        vm.selectDevice(device)
+                    } label: {
+                        HStack {
+                            Image(systemName: "headphones")
+                                .foregroundStyle(.secondary)
+                            Text(device.name)
+                            Spacer()
+                            Text("\(device.rssi) dBm")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                }
+            }
+
+            Divider().padding(.vertical, 4)
+
+            HStack {
+                Spacer()
+                Button("Quit") {
+                    NSApplication.shared.terminate(nil)
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 10)
+        }
+    }
+
+    // MARK: - Connected Device Panel
+
+    private var devicePanel: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Header
             HStack {
@@ -24,7 +100,6 @@ struct MenuContent: View {
                     }
                 }
                 Spacer()
-                // Battery
                 if let batt = vm.state.battery.first {
                     HStack(spacing: 4) {
                         Image(systemName: batteryIcon(batt.percentage))
@@ -92,20 +167,54 @@ struct MenuContent: View {
 
             Divider().padding(.vertical, 4)
 
-            // Launch at login
-            Toggle("Launch at Login", isOn: launchAtLoginBinding)
-                .toggleStyle(.switch)
-                .controlSize(.small)
-                .padding(.horizontal, 12)
-
-            Divider().padding(.vertical, 4)
-
             // Actions
             HStack(spacing: 8) {
                 Button("Reconnect") { vm.reconnect() }
                     .buttonStyle(.borderless)
                 Button("Power Off") { vm.powerOff() }
                     .buttonStyle(.borderless)
+                Spacer()
+                Button { showSettings = true } label: {
+                    Image(systemName: "gear")
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(.secondary)
+                Button("Quit") {
+                    NSApplication.shared.terminate(nil)
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 10)
+        }
+    }
+
+    // MARK: - Settings Page
+
+    private var settingsPage: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Button { showSettings = false } label: {
+                    Image(systemName: "chevron.left")
+                }
+                .buttonStyle(.borderless)
+                Text("Settings")
+                    .font(.headline)
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+
+            Divider()
+
+            SettingsView(vm: vm)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+
+            Divider().padding(.vertical, 4)
+
+            HStack {
                 Spacer()
                 Button("Quit") {
                     NSApplication.shared.terminate(nil)
@@ -130,43 +239,36 @@ struct MenuContent: View {
             .padding(.bottom, 2)
     }
 
-    private var launchAtLoginBinding: Binding<Bool> {
-        Binding(
-            get: { SMAppService.mainApp.status == .enabled },
-            set: { enabled in
-                do {
-                    if enabled {
-                        try SMAppService.mainApp.register()
-                    } else {
-                        try SMAppService.mainApp.unregister()
-                    }
-                } catch {
-                    // User can also manage this in System Settings > Login Items
-                }
-            }
-        )
-    }
-
     private let standbyOptions: [UInt8] = [0, 5, 10, 20, 30, 60, 120]
 
     private var audioModeBinding: Binding<UInt8> {
         Binding(
             get: { vm.state.audioModeIndex ?? 0 },
-            set: { vm.setAudioMode($0) }
+            set: { newValue in
+                // Don't send SET before device state is loaded
+                guard vm.state.audioModeIndex != nil else { return }
+                vm.setAudioMode(newValue)
+            }
         )
     }
 
     private var spatialAudioBinding: Binding<SpatialAudioMode> {
         Binding(
             get: { vm.state.spatialAudio ?? .off },
-            set: { vm.setSpatialAudio($0) }
+            set: { newValue in
+                guard vm.state.spatialAudio != nil else { return }
+                vm.setSpatialAudio(newValue)
+            }
         )
     }
 
     private var standbyBinding: Binding<UInt8> {
         Binding(
             get: { vm.state.standbyTimerMinutes ?? 0 },
-            set: { vm.setStandbyTimer($0) }
+            set: { newValue in
+                guard vm.state.standbyTimerMinutes != nil else { return }
+                vm.setStandbyTimer(newValue)
+            }
         )
     }
 
