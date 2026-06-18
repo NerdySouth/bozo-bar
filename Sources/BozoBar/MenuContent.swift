@@ -117,14 +117,32 @@ struct MenuContent: View {
             // Audio mode
             if !vm.state.audioModes.isEmpty {
                 sectionHeader("Audio Mode")
-                Picker("Audio Mode", selection: audioModeBinding) {
+                VStack(alignment: .leading, spacing: 0) {
                     ForEach(vm.state.audioModes) { mode in
-                        Text(mode.name).tag(mode.modeIndex)
+                        selectableRow(title: mode.name, isSelected: vm.state.audioModeIndex == mode.modeIndex) {
+                            if vm.state.audioModeIndex != mode.modeIndex {
+                                vm.setAudioMode(mode.modeIndex)
+                            }
+                        }
                     }
                 }
-                .pickerStyle(.inline)
-                .labelsHidden()
-                .padding(.horizontal, 8)
+            }
+
+            // Legacy noise cancellation used by non-Ultra models.
+            if vm.state.audioModes.isEmpty, let cnc = vm.state.cnc {
+                sectionHeader("Noise Cancellation")
+                VStack(alignment: .leading, spacing: 0) {
+                    if cnc.userEnableDisable {
+                        noiseCancellationButton(title: "Off", value: -1, cnc: cnc)
+                    }
+                    ForEach(0...Int(max(cnc.totalSteps, 1)), id: \.self) { level in
+                        noiseCancellationButton(
+                            title: cncLabel(level, totalSteps: cnc.totalSteps),
+                            value: level,
+                            cnc: cnc
+                        )
+                    }
+                }
             }
 
             // Spatial audio
@@ -241,22 +259,11 @@ struct MenuContent: View {
 
     private let standbyOptions: [UInt8] = [0, 5, 10, 20, 30, 60, 120]
 
-    private var audioModeBinding: Binding<UInt8> {
-        Binding(
-            get: { vm.state.audioModeIndex ?? 0 },
-            set: { newValue in
-                // Don't send SET before device state is loaded
-                guard vm.state.audioModeIndex != nil else { return }
-                vm.setAudioMode(newValue)
-            }
-        )
-    }
-
     private var spatialAudioBinding: Binding<SpatialAudioMode> {
         Binding(
             get: { vm.state.spatialAudio ?? .off },
             set: { newValue in
-                guard vm.state.spatialAudio != nil else { return }
+                guard let current = vm.state.spatialAudio, current != newValue else { return }
                 vm.setSpatialAudio(newValue)
             }
         )
@@ -266,7 +273,7 @@ struct MenuContent: View {
         Binding(
             get: { vm.state.standbyTimerMinutes ?? 0 },
             set: { newValue in
-                guard vm.state.standbyTimerMinutes != nil else { return }
+                guard let current = vm.state.standbyTimerMinutes, current != newValue else { return }
                 vm.setStandbyTimer(newValue)
             }
         )
@@ -280,5 +287,44 @@ struct MenuContent: View {
         case 63..<88: "battery.75percent"
         default: "battery.100percent"
         }
+    }
+
+    private func cncLabel(_ level: Int, totalSteps: UInt8) -> String {
+        if totalSteps <= 1 {
+            return level == 0 ? "Aware" : "Quiet"
+        }
+        if level == 0 { return "Aware" }
+        if level == Int(totalSteps) { return "Quiet" }
+        return "Level \(level)"
+    }
+
+    private func noiseCancellationButton(title: String, value: Int, cnc: CncState) -> some View {
+        let current = cnc.enabled ? Int(cnc.currentStep) : -1
+        return selectableRow(title: title, isSelected: current == value) {
+            guard current != value else { return }
+            if value < 0 {
+                vm.setCnc(level: 0, enabled: false)
+            } else {
+                let level = UInt8(min(value, Int(cnc.totalSteps)))
+                vm.setCnc(level: level, enabled: true)
+            }
+        }
+    }
+
+    private func selectableRow(title: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack {
+                Text(title)
+                Spacer()
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 4)
     }
 }
