@@ -5,13 +5,13 @@
 <h1 align="center">BozoBar</h1>
 
 <p align="center">
-  macOS menu bar app for controlling Bose QC Ultra headphones over Bluetooth.
+  macOS menu bar app for controlling Bose QuietComfort and QuietComfort Ultra headphones.
 </p>
 
 ---
 
-BozoBar lives in your menu bar and talks directly to your Bose QC Ultra
-headphones over BLE using the BMAP protocol. No companion app required.
+BozoBar lives in your menu bar and talks directly to Bose QuietComfort Ultra
+and QuietComfort headphones using the BMAP protocol. No companion app required.
 
 ## Features
 
@@ -26,7 +26,8 @@ headphones over BLE using the BMAP protocol. No companion app required.
 ## Requirements
 
 - macOS 13.0+
-- Bose QC Ultra Headphones (Gen 1), paired via system Bluetooth settings
+- Bose QuietComfort Ultra Headphones, paired via system Bluetooth settings
+- Bose QuietComfort Headphones, paired via system Bluetooth settings
 - Bluetooth permission granted to BozoBar
 
 ## Install
@@ -49,28 +50,29 @@ open Package.swift
 
 ## How it works
 
-BozoBar uses CoreBluetooth to communicate with your headphones via the
-Bose Message Access Protocol (BMAP) — a proprietary BLE GATT protocol
-reverse-engineered from the Bose Music Android app.
+BozoBar uses the Bose Message Access Protocol (BMAP), a proprietary protocol
+reverse-engineered from the Bose Music Android app. It selects the working
+transport for each paired device: BLE/GATT for QuietComfort Ultra, and classic
+Bluetooth RFCOMM for QuietComfort models that expose BMAP controls there.
 
 The app auto-discovers paired Bose devices on launch, connects, and
 queries battery, audio mode, noise cancellation, and standby timer state.
-All control commands are sent as segmented BMAP packets over a single
-BLE characteristic.
 
 ### Architecture
 
 ```
 BozoBarApp          SwiftUI @main, MenuBarExtra
   └─ HeadphoneViewModel   Published state, forwards to BleManager
-       └─ BleManager      CoreBluetooth central + peripheral delegate
-            ├─ BmapCodec       Packet codec, BLE segmentation/reassembly
-            └─ BmapProtocol    Query builders and response parsers
+           └─ BleManager      CoreBluetooth central + transport selection
+                ├─ RfcommBmapManager  Classic Bluetooth BMAP transport
+                ├─ BmapCodec       Packet codec, BLE segmentation/reassembly
+                └─ BmapProtocol    Query builders and response parsers
 ```
 
 ## Supported devices
 
 - Bose QuietComfort Ultra Headphones
+- Bose QuietComfort Headphones
 
 Other Bose headphones that use the BMAP protocol over BLE may also work
 but have not been tested.
